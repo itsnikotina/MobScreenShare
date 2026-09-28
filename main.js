@@ -87,20 +87,70 @@ function ensureDecoder() {
     error: (e) => {
       el("s-decoder").textContent = "error";
       log(`decoder error: ${e.message}`);
+      // Recover: drop the codec and re-sync on the next keyframe instead of
+      // hammering a closed codec.
+      decoderConfigured = false;
+      if (decoder && decoder.state !== "closed") {
+        try {
+          decoder.close();
+        } catch {
+          /* ignore */
+        }
+      }
+      decoder = null;
     },
   });
   decoderConfigured = false;
   return decoder;
 }
 
-function configureDecoder() {
-  const dec = ensureDecoder();
-  // Baseline profile, level 3.1. No `description` => Annex-B input mode.
-  const config = { codec: "avc1.42e01f", optimizeForLatency: true };
-  dec.configure(config);
-  decoderConfigured = true;
-  el("s-decoder").textContent = "configured";
-  log(`decoder configured (${config.codec}, annex-b)`);
+// Try hardware first, then software; resolves to a supported config or null.
+async function pickConfig() {
+  const base = { codec: "avc1.42e01f", optimizeForLatency: true };
+  const candidates = [
+    base,
+    { ...base, hardwareAcceleration: "prefer-software" },
+    { ...base, hardwareAcceleration: "prefer-hardware" },
+  ];
+  for (const cfg of candidates) {
+    try {
+      if (typeof VideoDecoder.isConfigSupported === "function") {
+        const res = await VideoDecoder.isConfigSupported(cfg);
+        if (res && res.supported) return res.config || cfg;
+      } else {
+        return cfg;
+      }
+    } catch (e) {
+      log(`isConfigSupported failed: ${e.message}`);
+    }
+  }
+  return null;
+}
+
+let configuring = false;
+async function configureDecoder() {
+  if (configuring) return;
+  configuring = true;
+  try {
+    const cfg = await pickConfig();
+    if (!cfg) {
+      el("s-decoder").textContent = "unsupported";
+      log("no supported H.264 decoder config in this environment");
+      return;
+    }
+    const dec = ensureDecoder();
+    dec.configure(cfg);
+    decoderConfigured = true;
+    el("s-decoder").textContent = "configured";
+    log(
+      `decoder configured (${cfg.codec}, hw=${cfg.hardwareAcceleration || "default"})`
+    );
+  } catch (e) {
+    el("s-decoder").textContent = "error";
+    log(`configure failed: ${e.message}`);
+  } finally {
+    configuring = false;
+  }
 }
 
 function handlePacket(buf) {
@@ -127,7 +177,24 @@ function handlePacket(buf) {
       renderStats();
       return;
     }
+    // Configuration is async; kick it off and drop this packet. The next
+    // keyframe will be decoded once the codec is ready.
     configureDecoder();
+    renderStats();
+    return;
+  }
+
+  // Codec configured but a decoder error may have torn it down; guard state.
+  if (!decoder || decoder.state !== "configured") {
+    if (decoder && decoder.state === "closed") decoderConfigured = false;
+    renderStats();
+    return;
+  }
+
+  // After a decoder error we must resume on a keyframe, not a delta.
+  if (!isKey && stats.frames === 0) {
+    renderStats();
+    return;
   }
 
   try {
@@ -139,6 +206,7 @@ function handlePacket(buf) {
     decoder.decode(chunk);
   } catch (e) {
     log(`decode threw: ${e.message}`);
+    decoderConfigured = false;
   }
   renderStats();
 }
