@@ -4,3 +4,13 @@ tools/node_modules/
 Prompt.txt
 Prompt2.txt
 Prompt3.txt
+
+# Este repo publica apenas a Activity (activity/) no GitHub Pages.
+# O código do projeto fica local, fora do versionamento.
+tools/
+core/
+relay/
+desktop/
+assets/
+Cargo.toml
+Cargo.lock
