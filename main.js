@@ -69,6 +69,18 @@ const canvas = el("video");
 const ctx = canvas.getContext("2d");
 let decoder = null;
 let decoderConfigured = false;
+let configuring = false;
+
+// Candidate decoder configs, tried in order. Software first: the Discord iframe
+// sandbox often reports hardware as supported but fails hardware decode at
+// runtime, so software is the safer default. On a runtime error we advance to
+// the next candidate.
+const DECODER_CANDIDATES = [
+  { codec: "avc1.42e01f", optimizeForLatency: true, hardwareAcceleration: "prefer-software" },
+  { codec: "avc1.42e01f", optimizeForLatency: true },
+  { codec: "avc1.42e01f", optimizeForLatency: true, hardwareAcceleration: "prefer-hardware" },
+];
+let candidateIndex = 0;
 
 function ensureDecoder() {
   if (decoder && decoder.state !== "closed") return decoder;
@@ -85,10 +97,9 @@ function ensureDecoder() {
       renderStats();
     },
     error: (e) => {
-      el("s-decoder").textContent = "error";
       log(`decoder error: ${e.message}`);
-      // Recover: drop the codec and re-sync on the next keyframe instead of
-      // hammering a closed codec.
+      // Tear down and, if no frame ever decoded with this config, advance to
+      // the next candidate so a broken hardware path falls back to software.
       decoderConfigured = false;
       if (decoder && decoder.state !== "closed") {
         try {
@@ -98,26 +109,30 @@ function ensureDecoder() {
         }
       }
       decoder = null;
+      if (stats.frames === 0 && candidateIndex < DECODER_CANDIDATES.length - 1) {
+        candidateIndex++;
+        log(`advancing to decoder candidate #${candidateIndex}`);
+      }
+      el("s-decoder").textContent = "error";
     },
   });
   decoderConfigured = false;
   return decoder;
 }
 
-// Try hardware first, then software; resolves to a supported config or null.
+// Pick the first candidate at/after candidateIndex that reports supported.
 async function pickConfig() {
-  const base = { codec: "avc1.42e01f", optimizeForLatency: true };
-  const candidates = [
-    base,
-    { ...base, hardwareAcceleration: "prefer-software" },
-    { ...base, hardwareAcceleration: "prefer-hardware" },
-  ];
-  for (const cfg of candidates) {
+  for (let i = candidateIndex; i < DECODER_CANDIDATES.length; i++) {
+    const cfg = DECODER_CANDIDATES[i];
     try {
       if (typeof VideoDecoder.isConfigSupported === "function") {
         const res = await VideoDecoder.isConfigSupported(cfg);
-        if (res && res.supported) return res.config || cfg;
+        if (res && res.supported) {
+          candidateIndex = i;
+          return res.config || cfg;
+        }
       } else {
+        candidateIndex = i;
         return cfg;
       }
     } catch (e) {
@@ -127,7 +142,6 @@ async function pickConfig() {
   return null;
 }
 
-let configuring = false;
 async function configureDecoder() {
   if (configuring) return;
   configuring = true;
