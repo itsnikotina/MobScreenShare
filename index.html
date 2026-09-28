@@ -23,6 +23,13 @@
         border-bottom: 1px solid #1a1b1e;
         font-size: 14px;
       }
+      #notice {
+        padding: 8px 12px;
+        background: #3a2f16;
+        color: #f0c674;
+        border-bottom: 1px solid #1a1b1e;
+        font-size: 13px;
+      }
       main {
         flex: 1;
         display: flex;
@@ -81,6 +88,7 @@
   </head>
   <body>
     <header>Screen Share POC — <span id="target"></span></header>
+    <div id="notice" hidden></div>
     <main>
       <div id="stage"><canvas id="video"></canvas></div>
       <aside>
