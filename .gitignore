@@ -5,9 +5,13 @@ Prompt.txt
 Prompt2.txt
 Prompt3.txt
 
+# Segredos/config local — nunca versionar
+.env
+
 # Este repo publica apenas a Activity (activity/) no GitHub Pages.
 # O código do projeto fica local, fora do versionamento.
 tools/
+scripts/
 core/
 relay/
 desktop/
