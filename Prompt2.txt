@@ -1,0 +1,1302 @@
+Quero que você continue o projeto de pesquisa/arquitetura do nosso sistema de compartilhamento de tela integrado ao Discord, mas **não implemente nada ainda**.
+
+Você já fez uma pesquisa anterior e descobriu uma restrição extremamente importante:
+
+> Discord Activities não suportam WebRTC diretamente dentro da Activity.
+
+Por causa disso, a arquitetura original:
+
+```text
+Windows App
+   ↓ WebRTC P2P
+Discord Activity
+```
+
+não é viável enquanto o viewer estiver dentro da Discord Activity.
+
+A partir dessa descoberta, quero que você faça uma **segunda rodada de pesquisa e arquitetura**, agora focada em encontrar a melhor solução prática mantendo a maior parte possível da ideia original.
+
+---
+
+# 1. Objetivo do projeto
+
+Quero criar um sistema privado de compartilhamento de tela para mim e meus amigos, integrado ao Discord como uma **Discord Activity**.
+
+A experiência desejada é aproximadamente:
+
+```text
+Discord
+└── Activity
+    ├── pessoas presentes na call
+    ├── streams disponíveis
+    ├── espectadores
+    └── vídeo/áudio das telas compartilhadas
+```
+
+Um programa nativo no Windows será responsável por:
+
+* capturar monitor ou janela;
+* capturar áudio do sistema;
+* capturar áudio individual de aplicações;
+* codificar vídeo;
+* enviar o stream;
+* controlar início/fim da transmissão.
+
+A Activity será responsável por:
+
+* interface;
+* descobrir usuários presentes;
+* mostrar streams;
+* assistir aos streams;
+* reproduzir vídeo;
+* reproduzir áudio;
+* controlar quem está assistindo.
+
+O Discord Bot será responsável por:
+
+* identidade;
+* autenticação/autorização;
+* presença;
+* estado da sala;
+* signaling;
+* eventos;
+* permissões;
+* coordenação.
+
+**O bot não deve transportar vídeo ou áudio.**
+
+---
+
+# 2. Restrição descoberta anteriormente
+
+A pesquisa anterior mostrou que:
+
+* WebRTC não funciona diretamente dentro de Discord Activities;
+* `getDisplayMedia()` também não deve ser usado dentro da Activity;
+* WebSocket é suportado pela infraestrutura da Activity;
+* WebCodecs pode ser utilizado para decodificação;
+* o projeto `discord-screen` usa uma arquitetura baseada em WebSocket + WebCodecs justamente por causa dessa limitação.
+
+Quero que você confirme novamente essas informações usando documentação atualizada do Discord e fontes confiáveis.
+
+Não assuma que a pesquisa anterior está correta sem verificar.
+
+---
+
+# 3. Nova arquitetura a investigar
+
+Quero investigar seriamente esta arquitetura:
+
+```text
+                  ┌──────────────────────┐
+                  │     Discord Bot      │
+                  │                      │
+                  │ Identity             │
+                  │ Presence             │
+                  │ Room state            │
+                  │ Signaling             │
+                  │ Permissions           │
+                  └──────────┬───────────┘
+                             │
+                             │ control/signaling
+                             │
+                             ▼
+┌──────────────────┐   ┌──────────────────────┐
+│ Windows Streamer │──▶│ Binary WebSocket     │
+│                  │   │ Relay                │
+│ WGC              │   │                      │
+│ WASAPI           │   │ Não decodifica       │
+│ Encoder          │   │ Não transcodifica    │
+│                  │   │ Não armazena         │
+└──────────────────┘   └──────────┬───────────┘
+                                  │
+                                  │ WebSocket
+                                  ▼
+                       ┌──────────────────────┐
+                       │   Discord Activity   │
+                       │                      │
+                       │ Embedded App SDK     │
+                       │ WebSocket            │
+                       │ WebCodecs            │
+                       │ Web Audio            │
+                       └──────────────────────┘
+```
+
+Mas quero que você determine se essa arquitetura realmente faz sentido.
+
+---
+
+# 4. Questão mais importante: Relay
+
+Quero investigar profundamente o conceito de um **binary WebSocket relay extremamente simples**.
+
+Não quero automaticamente transformar isso em um SFU tradicional.
+
+Quero saber se é possível ter algo como:
+
+```text
+Streamer
+   ↓
+WebSocket
+   ↓
+Relay
+   ↓
+WebSocket
+   ↓
+Viewer
+```
+
+onde o relay simplesmente:
+
+1. recebe bytes;
+2. identifica a sala/stream;
+3. identifica os espectadores interessados;
+4. encaminha os bytes;
+5. não decodifica;
+6. não transcodifica;
+7. não salva;
+8. não grava;
+9. não processa o vídeo.
+
+Ou seja, algo mais próximo de um:
+
+> "roteador de bytes de streams"
+
+do que um servidor de vídeo tradicional.
+
+Pesquise:
+
+* viabilidade;
+* limitações;
+* consumo de CPU;
+* consumo de RAM;
+* consumo de banda;
+* escalabilidade;
+* latência;
+* backpressure;
+* conexões simultâneas;
+* custo de infraestrutura;
+* comportamento com streams 1080p/1440p/4K;
+* múltiplos espectadores;
+* múltiplos streamers.
+
+Faça estimativas numéricas quando possível.
+
+Por exemplo:
+
+```text
+1 streamer
+1080p60 H264 ~ X Mbps
+5 espectadores
+→ X Mbps de entrada
+→ X * 5 Mbps de saída
+```
+
+Faça isso para:
+
+* 720p60
+* 1080p30
+* 1080p60
+* 1440p60
+* 4K60
+
+Use bitrates razoáveis e explique que são estimativas.
+
+---
+
+# 5. Quero investigar se existe alguma alternativa ao relay
+
+Antes de aceitar o relay, procure soluções que permitam manter:
+
+```text
+Windows → P2P → Activity
+```
+
+ou algo equivalente.
+
+Pesquise especificamente:
+
+* WebTransport;
+* WebSocket;
+* WebRTC fora da Activity;
+* Discord Embedded App SDK;
+* Discord Activities networking;
+* WebSocket peer-to-peer;
+* WebRTC através de algum mecanismo permitido pelo Discord;
+* WebCodecs;
+* WebTransport dentro de Activities;
+* qualquer API nova do Discord que possa ter surgido recentemente.
+
+O objetivo é descobrir:
+
+> Existe alguma maneira atual de fazer o tráfego de mídia diretamente entre streamer e viewer enquanto o viewer está dentro da Discord Activity?
+
+Se a resposta for não, quero que isso seja demonstrado com documentação atual.
+
+---
+
+# 6. Pesquisar o projeto discord-screen novamente
+
+Analise:
+
+https://github.com/Jc007zZ/discord-screen
+
+Quero entender principalmente:
+
+* arquitetura;
+* protocolo;
+* WebSocket;
+* formato dos pacotes;
+* como os frames são enviados;
+* como os espectadores entram;
+* como o streamer sabe quando mandar keyframe;
+* como funciona backpressure;
+* como detecta espectadores;
+* como funciona reconexão;
+* como a Activity recebe os dados;
+* como WebCodecs é utilizado;
+* como áudio é tratado;
+* limitações;
+* gargalos.
+
+Não copie código automaticamente.
+
+Quero entender as ideias arquiteturais que podemos reaproveitar.
+
+Verifique também a licença atual do repositório.
+
+---
+
+# 7. Pesquisar Bananas / p2p.kiwi
+
+Analise novamente:
+
+https://github.com/mistweaverco/bananas
+
+e o projeto para o qual ele aponta.
+
+Quero descobrir quais partes da arquitetura dele poderiam ser úteis para o nosso programa Windows.
+
+Principalmente:
+
+* P2P;
+* WebRTC;
+* signaling;
+* STUN;
+* TURN;
+* autenticação;
+* criptografia;
+* gerenciamento de peers;
+* reconexão;
+* transmissão de mídia.
+
+Mas diferencie claramente:
+
+```text
+coisas úteis para nosso Windows App
+```
+
+de:
+
+```text
+coisas que não funcionam dentro da Discord Activity
+```
+
+---
+
+# 8. Windows Capture
+
+Investigue novamente a melhor forma de capturar tela/janela no Windows.
+
+Compare:
+
+### Windows Graphics Capture
+
+vs.
+
+### Desktop Duplication API
+
+vs.
+
+outras alternativas relevantes.
+
+Quero saber:
+
+* desempenho;
+* latência;
+* captura de monitor;
+* captura de janela;
+* compatibilidade;
+* suporte a Windows 10/11;
+* facilidade de integração com Rust;
+* acesso aos frames;
+* possibilidade de manter GPU → encoder evitando cópias desnecessárias.
+
+Minha preferência é:
+
+```text
+GPU frame
+↓
+encoder hardware
+↓
+H264
+```
+
+com o mínimo possível de cópias CPU.
+
+---
+
+# 9. Áudio
+
+O sistema NÃO terá microfone.
+
+Quero somente:
+
+```text
+áudio do computador
++
+áudio de aplicações selecionadas
+```
+
+Exemplo:
+
+```text
+Spotify       ✓
+Minecraft     ✓
+Chrome        ✗
+Discord       ✗
+```
+
+Pesquise profundamente:
+
+* WASAPI;
+* Process Loopback;
+* Application Loopback;
+* Windows Audio Session API;
+* captura por processo;
+* captura do desktop;
+* mixing;
+* exclusão de aplicações;
+* volume individual;
+* mute;
+* stereo;
+* 48 kHz.
+
+O requisito é:
+
+```text
+Stereo
+48 kHz
+Sem microfone
+```
+
+Quero saber qual API realmente devemos usar.
+
+---
+
+# 10. Encoder
+
+Investigue:
+
+### NVIDIA
+
+* NVENC
+
+### AMD
+
+* AMF
+
+### Intel
+
+* Quick Sync
+
+### Microsoft
+
+* Media Foundation
+
+### Software
+
+* x264
+* OpenH264
+* outros relevantes
+
+Quero uma arquitetura de encoder com fallback:
+
+```text
+Hardware encoder disponível
+        ↓
+usar hardware
+
+caso contrário
+        ↓
+software encoder
+```
+
+O sistema deve detectar automaticamente o encoder disponível.
+
+Compare:
+
+* H264;
+* AV1;
+* HEVC, se relevante;
+* compatibilidade com WebCodecs;
+* qualidade;
+* bitrate;
+* latência;
+* consumo de GPU/CPU.
+
+Para o MVP, diga claramente qual codec você escolheria e por quê, sem simplesmente implementar ainda.
+
+---
+
+# 11. Áudio + vídeo
+
+Quero investigar como o protocolo poderia transportar:
+
+```text
+VIDEO
+AUDIO
+CONTROL
+```
+
+por WebSocket.
+
+Pode ser:
+
+```text
+binary frames
+```
+
+com um header pequeno contendo coisas como:
+
+```text
+type
+stream_id
+sequence
+timestamp
+flags
+payload_length
+```
+
+Investigue se isso é suficiente.
+
+Também quero estudar:
+
+* keyframes;
+* PTS/DTS;
+* timestamps;
+* sequência;
+* perda de pacotes;
+* frames atrasados;
+* buffer;
+* jitter;
+* sincronização A/V.
+
+---
+
+# 12. Espectadores
+
+Um ponto importante:
+
+Não quero que todos os usuários recebam todos os streams.
+
+Exemplo:
+
+```text
+Call:
+
+Berey
+João
+Maria
+Pedro
+
+Berey transmite.
+João assiste.
+Maria não assiste.
+Pedro não assiste.
+```
+
+O relay deve enviar os dados somente para quem está assistindo.
+
+Investigue como estruturar:
+
+```text
+STREAM_STARTED
+WATCH_STARTED
+WATCH_STOPPED
+STREAM_STOPPED
+```
+
+e como o relay sabe quais sockets recebem determinada stream.
+
+---
+
+# 13. Múltiplas streams
+
+Quero permitir no futuro:
+
+```text
+Berey → Stream A
+João  → Stream B
+Maria → Stream C
+```
+
+e usuários assistirem apenas às streams escolhidas.
+
+Investigue a estrutura:
+
+```text
+Room
+ ├── Members
+ ├── Streams
+ │    ├── Stream A
+ │    ├── Stream B
+ │    └── Stream C
+ └── Watchers
+```
+
+Não quero criar uma arquitetura que só funcione para uma única stream.
+
+---
+
+# 14. Estado da sala
+
+Quero manter a ideia de:
+
+```text
+ROOM_STATE
+MEMBER_JOINED
+MEMBER_LEFT
+USER_UPDATED
+
+STREAM_STARTED
+STREAM_STOPPED
+
+WATCH_STARTED
+WATCH_STOPPED
+```
+
+Investigue se snapshot + eventos é uma boa arquitetura.
+
+Por exemplo:
+
+```text
+CONNECT
+↓
+AUTHENTICATE
+↓
+ROOM_STATE
+↓
+EVENTS
+```
+
+Se a conexão cair:
+
+```text
+RECONNECT
+↓
+AUTHENTICATE
+↓
+ROOM_STATE
+```
+
+Quero evitar estado quebrado depois de reconexões.
+
+---
+
+# 15. Discord Identity
+
+Investigue a forma correta de identificar os usuários.
+
+Quero:
+
+```text
+Discord User ID
+username
+global_name/display_name
+avatar
+```
+
+O identificador principal deve ser:
+
+```text
+Discord User ID
+```
+
+Não username.
+
+Quero também saber como o Embedded App SDK pode ajudar nisso e quais dados devem ser validados pelo servidor.
+
+Não confie simplesmente em um `user_id` enviado pelo cliente.
+
+---
+
+# 16. Bot
+
+Quero manter o bot o mais simples possível.
+
+Ele deve cuidar de:
+
+```text
+Discord Gateway
+Identity
+Presence
+Voice state
+Room state
+Signaling
+Permissions
+Eventos
+```
+
+Ele NÃO deve:
+
+```text
+transportar vídeo
+transportar áudio
+processar vídeo
+armazenar vídeo
+```
+
+Investigue se realmente precisamos do bot para tudo isso ou se algumas responsabilidades podem ficar no relay/backend.
+
+Quero uma separação clara:
+
+```text
+Bot
+=
+controle do Discord
+
+Relay
+=
+transporte da mídia
+
+Activity
+=
+interface/viewer
+
+Windows App
+=
+captura + encode + envio
+```
+
+---
+
+# 17. Hosting
+
+Existe uma restrição importante:
+
+Eu consigo hospedar o bot, mas não quero assumir automaticamente que tenho infraestrutura para um servidor de mídia grande.
+
+Portanto, investigue:
+
+* qual seria a infraestrutura mínima para o relay;
+* se pode rodar no mesmo servidor do bot;
+* RAM necessária;
+* CPU necessária;
+* largura de banda;
+* tráfego mensal;
+* custo aproximado em VPS baratos;
+* se o relay precisa de GPU;
+* se Docker seria suficiente;
+* se Rust seria uma boa escolha;
+* se Node.js seria suficiente;
+* se Go seria melhor;
+* alternativas serverless;
+* Cloudflare Workers/WebSockets, se aplicável;
+* limitações de GitHub Pages;
+* limitações da infraestrutura de Discord Activities.
+
+IMPORTANTE:
+
+Não quero assumir que Cloudflare Workers, VPS, etc. funcionam sem verificar.
+
+---
+
+# 18. Segurança
+
+Pesquise uma arquitetura segura.
+
+Quero evitar:
+
+* qualquer pessoa conectando no relay;
+* falsificação de Discord ID;
+* acesso a streams de outra sala;
+* stream_id previsível suficiente para permitir acesso;
+* abuso do relay;
+* conexão infinita;
+* flood;
+* consumo ilimitado de banda;
+* replay de tokens.
+
+Investigue:
+
+* tokens temporários;
+* autenticação;
+* autorização;
+* room tokens;
+* stream tokens;
+* rate limiting;
+* heartbeat;
+* timeout;
+* limites de bitrate;
+* limites de conexões;
+* validação server-side.
+
+Não quero criar uma autenticação gigantesca.
+
+Quero algo proporcional ao projeto privado.
+
+---
+
+# 19. Privacidade
+
+Como é um projeto privado, quero entender exatamente:
+
+Quem consegue ver a stream?
+
+Idealmente:
+
+```text
+usuário entra na Activity
+↓
+autentica
+↓
+entra na room
+↓
+escolhe assistir uma stream
+↓
+relay autoriza
+↓
+recebe os bytes
+```
+
+Um usuário que não está autorizado não deve conseguir simplesmente descobrir:
+
+```text
+room_id
+stream_id
+```
+
+e assistir.
+
+---
+
+# 20. Protocolo
+
+Proponha um protocolo inicial simples.
+
+Por exemplo:
+
+```text
+Control channel:
+JSON / WebSocket messages
+
+Media channel:
+binary WebSocket frames
+```
+
+Algo como:
+
+```text
+CONTROL
+{
+    version,
+    type,
+    request_id,
+    payload
+}
+```
+
+e:
+
+```text
+MEDIA
+{
+    magic,
+    version,
+    stream_id,
+    media_type,
+    codec,
+    sequence,
+    timestamp,
+    flags,
+    payload_length,
+    payload
+}
+```
+
+Mas não assuma que esse formato é correto.
+
+Analise e proponha o formato mais adequado.
+
+---
+
+# 21. Backpressure
+
+Isso é muito importante.
+
+Imagine:
+
+```text
+Streamer = 20 Mbps
+Viewer A = conexão rápida
+Viewer B = conexão lenta
+Viewer C = conexão lenta
+```
+
+O relay não pode deixar Viewer B/C travarem o streamer.
+
+Investigue:
+
+* buffers por viewer;
+* limite de buffer;
+* descarte de frames;
+* keyframe recovery;
+* disconnect de viewer muito lento;
+* TCP/WebSocket;
+* comportamento quando o viewer fica para trás.
+
+Quero uma estratégia concreta.
+
+---
+
+# 22. Keyframes
+
+Investigue um mecanismo como:
+
+```text
+WATCH_STARTED
+↓
+viewer pede keyframe
+↓
+streamer envia próximo IDR
+↓
+viewer começa a decodificar
+```
+
+Também:
+
+```text
+decoder error
+↓
+REQUEST_KEYFRAME
+↓
+streamer envia IDR
+```
+
+Quero saber se isso é viável com o encoder escolhido.
+
+---
+
+# 23. Qualidade
+
+Quero estes modos:
+
+```text
+480p
+720p
+1080p
+1440p
+2160p
+```
+
+e:
+
+```text
+30 FPS
+60 FPS
+```
+
+Mas não quero necessariamente que o streamer encode cinco versões.
+
+Investigue opções:
+
+### Opção A
+
+Um único stream:
+
+```text
+4K60
+↓
+viewer reduz localmente
+```
+
+### Opção B
+
+Simulcast:
+
+```text
+720p
+1080p
+1440p
+```
+
+### Opção C
+
+SVC.
+
+Compare as opções.
+
+Para um projeto privado pequeno, quero saber qual é a arquitetura mais simples sem sacrificar demais a qualidade.
+
+---
+
+# 24. P2P futuro
+
+Mesmo que a Activity exija relay, quero que a arquitetura não torne impossível adicionar P2P no futuro.
+
+Por exemplo:
+
+```text
+Transport interface
+
+├── WebSocketRelayTransport
+└── WebRTCTransport
+```
+
+Se futuramente o Discord permitir WebRTC dentro Activities, poderíamos trocar:
+
+```text
+WebSocketRelayTransport
+```
+
+por:
+
+```text
+WebRTCTransport
+```
+
+sem reescrever:
+
+* capture;
+* audio;
+* encoder;
+* room;
+* UI.
+
+Avalie se essa abstração realmente vale a pena ou se seria overengineering.
+
+---
+
+# 25. Tauri + Rust
+
+Quero usar:
+
+```text
+Tauri
+Rust
+```
+
+para o Windows App.
+
+Investigue:
+
+* crates existentes;
+* integração com Windows APIs;
+* WGC;
+* WASAPI;
+* WebRTC;
+* WebCodecs;
+* encoders;
+* FFmpeg;
+* Media Foundation;
+* bindings Win32;
+* sidecars.
+
+Não quero adicionar FFmpeg automaticamente só porque é conhecido.
+
+Compare as alternativas.
+
+---
+
+# 26. Activity
+
+A Activity será hospedada no:
+
+```text
+GitHub Pages
+```
+
+Investigue:
+
+* Embedded App SDK;
+* URL Mapping;
+* WebSocket;
+* WebCodecs;
+* Web Audio;
+* compatibilidade;
+* CSP;
+* CORS;
+* HTTPS;
+* limitações do GitHub Pages;
+* limites da infraestrutura de Discord.
+
+Quero saber exatamente o que o frontend pode e não pode fazer.
+
+---
+
+# 27. Licenças
+
+Analise as licenças de:
+
+* discord-screen;
+* bananas/p2p.kiwi;
+* bibliotecas relevantes;
+* encoders;
+* codecs;
+* WebRTC libraries;
+* Rust crates.
+
+Diferencie:
+
+```text
+pode usar como dependência
+```
+
+de:
+
+```text
+pode copiar código
+```
+
+de:
+
+```text
+tem obrigação de disponibilizar código
+```
+
+Não quero incorporar código incompatível com o projeto.
+
+---
+
+# 28. Arquitetura modular
+
+Depois da pesquisa, proponha uma estrutura modular.
+
+Por exemplo:
+
+```text
+Windows App
+
+src/
+├── app/
+├── capture/
+├── audio/
+├── encoder/
+├── transport/
+├── room/
+├── discord/
+├── protocol/
+├── streaming/
+└── ui/
+```
+
+Mas proponha uma estrutura melhor se necessário.
+
+Não quero:
+
+```text
+main.rs
+```
+
+com milhares de linhas.
+
+Também não quero criar 200 abstrações desnecessárias.
+
+Quero modularidade prática.
+
+---
+
+# 29. O que NÃO quero
+
+Não quero que você implemente:
+
+* SFU;
+* transcoding server;
+* armazenamento;
+* gravação;
+* CDN;
+* banco de dados inicialmente;
+* sistema público de contas;
+* sistema de assinatura;
+* painel administrativo;
+* monetização;
+* suporte a Linux/macOS inicialmente;
+* microfone;
+* chamadas telefônicas;
+* chat complexo.
+
+É um projeto privado para Discord.
+
+---
+
+# 30. O que quero no final da pesquisa
+
+Não me entregue apenas uma lista de links.
+
+Quero um relatório técnico.
+
+Estruture assim:
+
+## 1. Resumo executivo
+
+Explique em poucas linhas qual arquitetura é realmente viável.
+
+## 2. Restrição do Discord
+
+Mostre claramente o que a Activity suporta e não suporta atualmente.
+
+## 3. Arquiteturas possíveis
+
+Compare:
+
+```text
+A — Activity + WebSocket Relay
+B — Activity + alguma alternativa
+C — P2P puro fora da Activity
+D — outras soluções descobertas
+```
+
+Não faça ranking subjetivo. Explique os trade-offs de cada uma.
+
+## 4. Arquitetura recomendada
+
+Descreva detalhadamente:
+
+```text
+Windows App
+Bot
+Relay
+Activity
+```
+
+e a comunicação entre eles.
+
+## 5. Fluxo completo
+
+Mostre exemplos:
+
+### Entrar na Activity
+
+### Começar stream
+
+### Assistir stream
+
+### Parar stream
+
+### Entrar no meio de uma stream
+
+### Sair da Activity
+
+### Reconectar
+
+### Solicitar keyframe
+
+### Dois usuários transmitindo
+
+## 6. Protocolo
+
+Defina uma proposta inicial.
+
+## 7. Captura
+
+WGC vs Desktop Duplication.
+
+## 8. Áudio
+
+WASAPI/Application Loopback.
+
+## 9. Encoder
+
+H264/AV1/etc.
+
+## 10. Relay
+
+Arquitetura e estimativas de recursos.
+
+## 11. Segurança
+
+Modelo de autenticação/autorização.
+
+## 12. Custos
+
+Estime o custo de infraestrutura para um grupo pequeno.
+
+## 13. Licenças
+
+Tabela das principais dependências/projetos.
+
+## 14. Estrutura do código
+
+Proponha uma arquitetura modular.
+
+## 15. POCs
+
+Liste os POCs que precisamos fazer antes da implementação completa.
+
+A ordem deve priorizar os maiores riscos técnicos.
+
+Por exemplo:
+
+```text
+POC 1
+Activity → WebSocket
+
+POC 2
+Activity → WebCodecs
+
+POC 3
+Windows → WGC
+
+POC 4
+Windows → WASAPI Process Loopback
+
+POC 5
+Windows → H264
+
+POC 6
+Windows → Relay → Activity
+
+POC 7
+Bot → Activity identity
+
+POC 8
+Tudo integrado
+```
+
+Mas altere a ordem se sua pesquisa indicar uma ordem melhor.
+
+---
+
+# 31. Regra principal
+
+**NÃO IMPLEMENTE O PROJETO AINDA.**
+
+Não crie:
+
+* arquivos;
+* código;
+* servidor;
+* Tauri app;
+* bot;
+* Activity.
+
+Somente faça:
+
+```text
+pesquisa
++
+validação
++
+arquitetura
++
+POCs planejados
+```
+
+Se precisar testar alguma coisa para validar uma afirmação, descreva o teste necessário, mas não transforme isso em implementação completa.
+
+O objetivo desta etapa é terminar sabendo:
+
+> "Qual arquitetura realmente funciona hoje, quais são os gargalos e exatamente o que precisamos construir."
+
+Quero uma resposta técnica, crítica e honesta. Se alguma parte da ideia original estiver errada, diga claramente e explique por quê. Não tente preservar uma decisão só porque ela apareceu no plano anterior.

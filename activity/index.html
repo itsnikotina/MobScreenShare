@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Screen Share POC — Viewer</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #1e1f22;
+        color: #dbdee1;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+      header {
+        padding: 8px 12px;
+        background: #2b2d31;
+        border-bottom: 1px solid #1a1b1e;
+        font-size: 14px;
+      }
+      main {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      #stage {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #000;
+        min-width: 0;
+      }
+      canvas {
+        max-width: 100%;
+        max-height: 100%;
+        background: #000;
+      }
+      aside {
+        width: 240px;
+        padding: 12px;
+        background: #2b2d31;
+        border-left: 1px solid #1a1b1e;
+        font-size: 13px;
+        overflow-y: auto;
+      }
+      .stat {
+        display: flex;
+        justify-content: space-between;
+        padding: 2px 0;
+      }
+      .stat span:last-child {
+        font-variant-numeric: tabular-nums;
+        color: #fff;
+      }
+      .state {
+        font-weight: 600;
+      }
+      .state.connected { color: #23a55a; }
+      .state.connecting { color: #f0b232; }
+      .state.error { color: #f23f43; }
+      h2 {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #949ba4;
+        margin: 16px 0 6px;
+      }
+      #log {
+        font-family: ui-monospace, "Cascadia Code", monospace;
+        font-size: 11px;
+        white-space: pre-wrap;
+        color: #b5bac1;
+      }
+    </style>
+  </head>
+  <body>
+    <header>Screen Share POC — <span id="target"></span></header>
+    <main>
+      <div id="stage"><canvas id="video"></canvas></div>
+      <aside>
+        <h2>Connection</h2>
+        <div class="stat"><span>State</span><span id="s-state" class="state connecting">CONNECTING</span></div>
+        <div class="stat"><span>Room</span><span id="s-room">test-room</span></div>
+        <div class="stat"><span>Stream</span><span id="s-stream">test-stream</span></div>
+        <div class="stat"><span>Reconnects</span><span id="s-reconnects">0</span></div>
+        <h2>Media</h2>
+        <div class="stat"><span>Packets</span><span id="s-packets">0</span></div>
+        <div class="stat"><span>Bytes</span><span id="s-bytes">0 B</span></div>
+        <div class="stat"><span>Frames decoded</span><span id="s-frames">0</span></div>
+        <div class="stat"><span>Last seq</span><span id="s-seq">—</span></div>
+        <div class="stat"><span>Max frame</span><span id="s-maxframe">0 B</span></div>
+        <div class="stat"><span>Decoder</span><span id="s-decoder">idle</span></div>
+        <div class="stat"><span>Resolution</span><span id="s-res">—</span></div>
+        <h2>Log</h2>
+        <div id="log"></div>
+      </aside>
+    </main>
+    <script src="./config.js"></script>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
